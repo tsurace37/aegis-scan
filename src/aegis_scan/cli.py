@@ -19,8 +19,13 @@ independent methods (spectral signature analysis, activation
 clustering), neither of which is shown stage 02's ground-truth poison
 mask -- that's held back for stage 07's evaluation, not used here.
 
-Later stages (fuse, evaluate, report) will be added as further
-subcommands here as they're built.
+`aegis-scan fuse` runs stage 06: combine both detectors' independent
+outputs into one per-sample score and a few model-level risk
+statistics -- still without looking at the ground truth, which stays
+held back for stage 07.
+
+Later stages (evaluate, report) will be added as further subcommands
+here as they're built.
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ from .activations.extract import extract_activations
 from .datasets.loaders import load_benchmark_dataset, load_healthcare_dataset, load_synthetic_dataset
 from .detect.clustering import activation_clustering_flags
 from .detect.spectral import spectral_signature_scores
+from .fuse import fuse_scores
 from .poison.inject import SquareTrigger, inject_poison
 from .train import TrainConfig, load_checkpoint, save_checkpoint, train_classifier
 
@@ -153,6 +159,38 @@ def cmd_detect(args: argparse.Namespace) -> None:
     print("     (both methods ran blind to stage 02's ground-truth poison mask -- see stage 07 for scoring)")
 
 
+def cmd_fuse(args: argparse.Namespace) -> None:
+    print(f"[06] loading detection results from {args.detect}...")
+    with np.load(args.detect) as npz:
+        spectral_scores = npz["spectral_scores"]
+        clustering_flags = npz["clustering_flags"]
+        labels = npz["labels"]
+
+    print(
+        f"[06] fusing {len(labels)} samples' spectral scores + clustering flags "
+        f"(spectral cutoff: top {1 - args.spectral_percentile_cutoff:.0%} per class)..."
+    )
+    result = fuse_scores(
+        spectral_scores, clustering_flags, labels, spectral_percentile_cutoff=args.spectral_percentile_cutoff
+    )
+    print(f"      mean fused score:            {result.mean_fused_score:.4f}")
+    print(f"      flagged by either detector:  {result.fraction_flagged_by_either:.3%}")
+    print(f"      flagged by BOTH detectors:   {result.fraction_flagged_by_both:.3%}  <- headline risk number")
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        out_path,
+        fused_scores=result.fused_scores,
+        agreement=result.agreement,
+        labels=labels,
+        mean_fused_score=result.mean_fused_score,
+        fraction_flagged_by_either=result.fraction_flagged_by_either,
+        fraction_flagged_by_both=result.fraction_flagged_by_both,
+    )
+    print(f"[--] saved to {out_path}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis-scan",
@@ -200,6 +238,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_detect.add_argument("--seed", type=int, default=42)
     p_detect.add_argument("--out", required=True, help="Output .npz path for detection results")
     p_detect.set_defaults(func=cmd_detect)
+
+    p_fuse = sub.add_parser("fuse", help="Stage 06: combine both detectors' outputs into one score.")
+    p_fuse.add_argument("--detect", required=True, help="Detection results .npz path (from `aegis-scan detect`)")
+    p_fuse.add_argument(
+        "--spectral-percentile-cutoff",
+        type=float,
+        default=0.9,
+        dest="spectral_percentile_cutoff",
+        help="Per-class percentile above which spectral analysis counts as 'flagging' a sample (default 0.9)",
+    )
+    p_fuse.add_argument("--out", required=True, help="Output .npz path for fused results")
+    p_fuse.set_defaults(func=cmd_fuse)
 
     return parser
 

@@ -2,7 +2,7 @@
 
 Open-source detection of data poisoning and backdoor attacks in ML classification pipelines, validated across a healthcare-imaging benchmark and a general-purpose benchmark.
 
-**Status: early development.** Stages 01-05 (dataset loading, synthetic poison injection, classifier training, activation extraction, detection) are implemented and tested below. Stages 06-08 (fusion, evaluation, and reporting) are in progress.
+**Status: early development.** Stages 01-06 (dataset loading, synthetic poison injection, classifier training, activation extraction, detection, fusion) are implemented and tested below. Stages 07-08 (evaluation and reporting) are in progress.
 
 This project is the empirical companion to [*Toward Automated Detection of Data Poisoning and Backdoor Attacks in Healthcare Imaging AI*](https://doi.org/10.5281/zenodo.22431042) (Zenodo, DOI 10.5281/zenodo.22431042), which specifies the methodology this code implements.
 
@@ -17,7 +17,7 @@ Healthcare organizations are deploying AI-enabled diagnostic tools faster than t
 3. **Train a classifier** -- a compact ResNet on the poisoned data. *(implemented)*
 4. **Extract activations** -- forward hooks capture intermediate-layer activations. *(implemented)*
 5. **Detect** -- spectral signature analysis and activation clustering, run independently on those activations. *(implemented)*
-6. **Fuse scores** -- combine both methods into a per-sample and model-level risk score. *(not yet implemented)*
+6. **Fuse scores** -- combine both methods into a per-sample and model-level risk score. *(implemented)*
 7. **Evaluate** -- score detection accuracy (TPR/FPR) against step 2's ground truth. *(not yet implemented)*
 8. **Report** -- map findings to MITRE ATLAS and NIST AI RMF. *(not yet implemented)*
 
@@ -60,6 +60,14 @@ aegis-scan detect --data data/poisoned_healthcare_5pct.npz --activations data/ac
 
 `detect` runs spectral signature analysis and activation clustering independently, per class, on the activations -- both methods are blind to stage 02's `poison_mask`; neither one sees it. It saves each sample's spectral outlier score and its activation-clustering minority-cluster flag, for stage 06 to combine and stage 07 to score against the ground truth.
 
+Combine both detectors' outputs into one score:
+
+```bash
+aegis-scan fuse --detect data/detect_healthcare_5pct.npz --out data/fuse_healthcare_5pct.npz
+```
+
+`fuse` prints a mean fused score plus two model-level statistics: the fraction of samples flagged by *either* detector (higher recall, more permissive), and the fraction flagged by *both* (the headline risk number -- two differently-motivated methods agreeing on the same sample is much stronger evidence than either alone). Still entirely blind to the ground truth; stage 07 is where that finally gets checked.
+
 ## Test
 
 ```bash
@@ -75,6 +83,8 @@ pytest
 - **Why forward hooks instead of changing the model's `forward()`:** stage 04 needs a trained model's intermediate activations without permanently altering how that model behaves as a classifier. A forward hook attaches for the duration of one inference pass and is removed immediately after, so `SmallResNet` stays an ordinary classifier the rest of the time -- and the same extraction code will work against a different architecture later without changes.
 - **Why detection runs per class, not on the whole dataset at once:** both methods look for "this class secretly contains an unnatural sub-pattern" -- spectral signatures find a one-directional fingerprint within a class's activations, activation clustering looks for a distinguishable minority sub-population within a class. Pooling every class together would mostly just rediscover the classes themselves, not a poisoning signal.
 - **Why activation clustering only flags a cluster below `max_minority_fraction` (35% by default):** k-means with k=2 always returns *some* split, even for a class with no real sub-population -- run it on one uniform blob and it still cuts it roughly in half. Only trusting the smaller cluster when it's an actual minority (comfortably above this project's tested 1-10% poisoning rates, but well below an even 50/50 split) avoids mistaking that artifact for a finding.
+- **Why fusion ranks spectral scores by per-class percentile instead of using the raw scores:** spectral signature scores aren't comparable across classes -- each class gets its own SVD and its own scale. Converting to a 0-1 rank within each class first puts every class on the same footing before averaging with the clustering flag, without assuming anything about how many samples are actually poisoned.
+- **Why "flagged by both detectors" is the headline risk number, not "flagged by either":** the two methods have different blind spots, so agreement between them is much less likely to happen by chance than either one alone. Testing this on a synthetic 10%-poisoned run bore it out directly: the "both" agreement flag had zero false positives (though it caught only 58 of the 100 poisoned samples), while ranking all samples by the continuous fused score put 99 of the 100 poisoned samples in the top 100 -- precision and recall trade off differently depending on which output you read.
 
 ## License
 
