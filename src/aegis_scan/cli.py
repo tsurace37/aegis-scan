@@ -30,8 +30,11 @@ mask, and it uses it only to score how well stages 05-06 did --
 TPR/FPR for the clustering and agreement flags, AUROC/average
 precision/top-k recall for the spectral and fused scores.
 
-Later stages (report) will be added as further subcommands here as
-they're built.
+`aegis-scan report` runs stage 08, the last stage: it runs no new
+analysis of its own, just translates stage 07's numbers into a
+report mapped to MITRE ATLAS technique IDs and the NIST AI RMF
+"Measure" function, legible to a security or compliance reviewer
+without first learning this project's internals.
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ from .detect.clustering import activation_clustering_flags
 from .detect.spectral import spectral_signature_scores
 from .evaluate import evaluate
 from .fuse import fuse_scores
+from .report import generate_report, render_markdown
 from .poison.inject import SquareTrigger, inject_poison
 from .train import TrainConfig, load_checkpoint, save_checkpoint, train_classifier
 
@@ -263,6 +267,20 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     print(f"[--] saved to {out_path}")
 
 
+def cmd_report(args: argparse.Namespace) -> None:
+    print(f"[08] loading evaluation results from {args.evaluate}...")
+    evaluation = json.loads(Path(args.evaluate).read_text())
+
+    print(f"[08] mapping findings to MITRE ATLAS + NIST AI RMF for dataset '{args.dataset}'...")
+    report = generate_report(evaluation, dataset=args.dataset)
+    print(f"      {report.headline}")
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(render_markdown(report))
+    print(f"[--] saved to {out_path}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis-scan",
@@ -337,6 +355,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_evaluate.add_argument("--out", required=True, help="Output .json path for the evaluation report")
     p_evaluate.set_defaults(func=cmd_evaluate)
+
+    p_report = sub.add_parser(
+        "report", help="Stage 08: map stage 07's evaluation to MITRE ATLAS and the NIST AI RMF."
+    )
+    p_report.add_argument("--evaluate", required=True, help="Evaluation report .json path (from `aegis-scan evaluate`)")
+    p_report.add_argument("--dataset", default="unspecified", help="Dataset name/label to show in the report")
+    p_report.add_argument("--out", required=True, help="Output .md path for the assurance report")
+    p_report.set_defaults(func=cmd_report)
 
     return parser
 

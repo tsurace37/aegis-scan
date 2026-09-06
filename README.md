@@ -2,7 +2,7 @@
 
 Open-source detection of data poisoning and backdoor attacks in ML classification pipelines, validated across a healthcare-imaging benchmark and a general-purpose benchmark.
 
-**Status: early development.** Stages 01-07 (dataset loading, synthetic poison injection, classifier training, activation extraction, detection, fusion, evaluation) are implemented and tested below. Stage 08 (reporting) is in progress.
+**Status: all 8 pipeline stages implemented and tested.** Dataset loading, synthetic poison injection, classifier training, activation extraction, detection, fusion, evaluation, and reporting are all below, end to end, on the synthetic dataset -- confirming against the real healthcare/benchmark loaders on a machine with normal internet access is the next step.
 
 This project is the empirical companion to [*Toward Automated Detection of Data Poisoning and Backdoor Attacks in Healthcare Imaging AI*](https://doi.org/10.5281/zenodo.22431042) (Zenodo, DOI 10.5281/zenodo.22431042), which specifies the methodology this code implements.
 
@@ -19,7 +19,7 @@ Healthcare organizations are deploying AI-enabled diagnostic tools faster than t
 5. **Detect** -- spectral signature analysis and activation clustering, run independently on those activations. *(implemented)*
 6. **Fuse scores** -- combine both methods into a per-sample and model-level risk score. *(implemented)*
 7. **Evaluate** -- score detection accuracy (TPR/FPR) against step 2's ground truth. *(implemented)*
-8. **Report** -- map findings to MITRE ATLAS and NIST AI RMF. *(not yet implemented)*
+8. **Report** -- map findings to MITRE ATLAS and NIST AI RMF. *(implemented)*
 
 ## Install
 
@@ -76,6 +76,14 @@ aegis-scan evaluate --inject data/poisoned_healthcare_5pct.npz --detect data/det
 
 `evaluate` is the one command in the whole pipeline allowed to look at `poison_mask`. `--detect` and `--fuse` are both optional (pass whichever outputs you have -- at least one is expected), and it prints TPR/FPR/precision for the two boolean flags (clustering, agreement) plus AUROC/average precision/top-k recall for the two continuous scores (spectral, fused), then saves the full report as JSON.
 
+Last, translate those numbers into a report a security or compliance reviewer can read without learning this project's internals:
+
+```bash
+aegis-scan report --evaluate data/evaluate_healthcare_5pct.json --dataset healthcare_5pct --out data/report_healthcare_5pct.md
+```
+
+`report` runs no new analysis -- everything in it traces back to a number `evaluate` already computed against ground truth. It picks the strongest available evidence (the fused score, if present) for a one-sentence headline finding, then maps the attack being tested for to MITRE ATLAS technique IDs ([AML.T0020](https://atlas.mitre.org/) Poison Training Data, AML.T0059 Erode Dataset Integrity, AML.T0018 Manipulate AI Model) and the specific NIST AI RMF subcategory this kind of testing satisfies (MEASURE 2.7: "AI system security and resilience... are evaluated and documented"), and saves the result as a self-contained Markdown report.
+
 ## Test
 
 ```bash
@@ -97,8 +105,8 @@ pytest
 - **Why `evaluate`'s metrics return NaN instead of raising when a class is undefined:** precision is undefined when nothing was flagged (0/0), and AUROC/average precision are undefined when every sample -- or no sample -- is truly poisoned (there's no "other class" to rank against). Both are real situations a synthetic run at an extreme poisoning rate can hit; NaN propagates that "not applicable here" signal instead of forcing a crash or a misleading 0.
 - **Why `top_k_recall` is reported alongside AUROC/average precision:** AUROC and AP are the right metrics for comparing detectors in the abstract, but neither answers a concrete question a reviewer will actually ask: "if I flag as many samples as are truly poisoned, how many do I actually catch?" `top_k_recall` answers exactly that, in the same terms used for the manual sanity checks run during development (e.g. "99 of the 100 poisoned samples were in the top 100 by fused score").
 - **Why `evaluate --detect` and `--fuse` are both optional (but at least one is expected):** stage 07 is meant to be run against whatever's available -- just stage 05's raw outputs, just stage 06's fused ones, or (typically) both side by side. Requiring both would make it impossible to spot-check stage 05 in isolation before fusion is even run.
-
-## License
+- **Why the MITRE ATLAS / NIST AI RMF mapping was verified against primary sources, not summarized from blog posts:** the technique IDs (AML.T0020, AML.T0059, AML.T0018) were checked directly against MITRE ATLAS's own technique data, and the MEASURE 2.7 wording was quoted directly from NIST AI 100-1 -- because a wrong citation in a security report is worse than an absent one, and secondhand summaries of these frameworks have been found to drift from the primary text elsewhere in this project already.
+- **Why `report` doesn't compute a single overall risk score:** collapsing TPR, FPR, AUROC, and top-k recall into one number would hide exactly the nuance stage 06/07's own testing surfaced -- that "flagged by both detectors" and "the continuous fused score" trade off precision and recall very differently. The report shows every metric that was supplied and states a headline finding in plain language, but leaves risk tolerance (how much residual FPR/FNR is acceptable) to the reader, since that's an organizational policy decision this tool has no basis to make for them.
 
 Apache-2.0. See `LICENSE`.
 
