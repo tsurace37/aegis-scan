@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegis-scan"
+version = "0.1.0"
+description = "Open-source detection of data poisoning and backdoor attacks in ML classification pipelines, validated on healthcare imaging and general-purpose benchmarks."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Suresh Tamang" }]
+keywords = ["ai-security", "backdoor-detection", "data-poisoning", "mitre-atlas", "nist-ai-rmf", "healthcare-ai"]
+dependencies = [
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "medmnist>=3.0",
+    "numpy>=1.26",
+    "scikit-learn>=1.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+aegis-scan = "aegis_scan.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
