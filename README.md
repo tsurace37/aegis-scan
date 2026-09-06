@@ -10,6 +10,10 @@ This project is the empirical companion to [*Toward Automated Detection of Data 
 
 Healthcare organizations are deploying AI-enabled diagnostic tools faster than they can independently verify those models haven't been tampered with. Governance frameworks like ISO/IEC 42001 tell you an organization *has a policy* for reviewing its AI systems; they don't tell you whether a specific deployed model was actually tested against data poisoning or backdoor triggers. This project is the missing technical-testing layer: it combines two established detection techniques -- spectral signature analysis ([Tran et al., 2018](https://arxiv.org/abs/1811.00636)) and activation clustering ([Chen et al., 2018](https://arxiv.org/abs/1811.03728)) -- and reports results against [MITRE ATLAS](https://atlas.mitre.org/) technique IDs and the [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework)'s *Measure* function, so findings are legible to a security team without translation.
 
+## Why the name
+
+An *aegis* was the shield carried by Zeus and Athena in Greek mythology -- famously said to bear the head of Medusa on it to ward off attackers -- and the word has since come to mean protection or defense more generally (as in "under the aegis of"). It's also the name of the U.S. Navy's Aegis Combat System, the shield-and-radar defense system that protects ships from incoming missiles. `aegis-scan` is the same idea applied to an ML pipeline: it scans a model's training data and activations for the hidden threats a defensive shield would need to catch.
+
 ## Pipeline
 
 1. **Load datasets** -- a healthcare-imaging benchmark and a non-healthcare benchmark, in a common format, to test cross-sector generalization. *(implemented)*
