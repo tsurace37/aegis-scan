@@ -7,7 +7,14 @@ images, labels, and the ground-truth poison mask -- to disk, so stage 03
 (training) can start from a fixed, reproducible artifact instead of
 re-running injection every time.
 
-Later stages (train, detect, evaluate, report) will be added as further
+`aegis-scan train` runs stage 03: train a classifier on that saved
+artifact and save the resulting model checkpoint.
+
+`aegis-scan extract-activations` runs stage 04: load a trained
+checkpoint, run every sample back through it, and save one named layer's
+activations to disk for stage 05's detectors to consume.
+
+Later stages (detect, fuse, evaluate, report) will be added as further
 subcommands here as they're built.
 """
 
@@ -18,8 +25,10 @@ from pathlib import Path
 
 import numpy as np
 
+from .activations.extract import extract_activations
 from .datasets.loaders import load_benchmark_dataset, load_healthcare_dataset, load_synthetic_dataset
 from .poison.inject import SquareTrigger, inject_poison
+from .train import TrainConfig, load_checkpoint, save_checkpoint, train_classifier
 
 DATASET_LOADERS = {
     "healthcare": load_healthcare_dataset,
@@ -62,6 +71,44 @@ def cmd_inject(args: argparse.Namespace) -> None:
     print(f"[--] saved to {out_path}")
 
 
+def cmd_train(args: argparse.Namespace) -> None:
+    print(f"[03] loading poisoned dataset from {args.data}...")
+    with np.load(args.data) as npz:
+        images, labels = npz["images"], npz["labels"]
+    print(f"     {len(images)} images, shape {images.shape[1:]}, {int(labels.max()) + 1} classes")
+
+    config = TrainConfig(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, seed=args.seed)
+    print(
+        f"[03] training SmallResNet: epochs={config.epochs}, batch_size={config.batch_size}, "
+        f"lr={config.lr}, seed={config.seed}..."
+    )
+    result = train_classifier(images, labels, config=config)
+    last = result.history[-1]
+    print(f"     final epoch: train_loss={last['train_loss']:.4f}, train_acc={last['train_acc']:.3%}")
+
+    out_path = Path(args.out)
+    save_checkpoint(result, out_path)
+    print(f"[--] saved checkpoint to {out_path}")
+
+
+def cmd_extract_activations(args: argparse.Namespace) -> None:
+    print(f"[04] loading checkpoint from {args.model}...")
+    model = load_checkpoint(args.model)
+
+    print(f"[04] loading dataset from {args.data}...")
+    with np.load(args.data) as npz:
+        images = npz["images"]
+
+    print(f"[04] extracting layer '{args.layer}' activations for {len(images)} samples...")
+    activations = extract_activations(model, images, layer_name=args.layer, batch_size=args.batch_size)
+    print(f"     activations shape: {activations.shape}")
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(out_path, activations=activations, layer=args.layer)
+    print(f"[--] saved to {out_path}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis-scan",
@@ -78,6 +125,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_inject.add_argument("--seed", type=int, default=42)
     p_inject.add_argument("--out", required=True, help="Output .npz path")
     p_inject.set_defaults(func=cmd_inject)
+
+    p_train = sub.add_parser("train", help="Stage 03: train a classifier on an injected .npz dataset.")
+    p_train.add_argument("--data", required=True, help="Input .npz path (from `aegis-scan inject`)")
+    p_train.add_argument("--epochs", type=int, default=10)
+    p_train.add_argument("--batch-size", type=int, default=64, dest="batch_size")
+    p_train.add_argument("--lr", type=float, default=1e-3)
+    p_train.add_argument("--seed", type=int, default=42)
+    p_train.add_argument("--out", required=True, help="Output checkpoint (.pt) path")
+    p_train.set_defaults(func=cmd_train)
+
+    p_extract = sub.add_parser(
+        "extract-activations", help="Stage 04: extract a trained model's intermediate-layer activations."
+    )
+    p_extract.add_argument("--model", required=True, help="Checkpoint (.pt) path (from `aegis-scan train`)")
+    p_extract.add_argument("--data", required=True, help="Input .npz path to run through the model")
+    p_extract.add_argument("--layer", default="layer3", help="Named submodule to hook, e.g. 'layer3' (default)")
+    p_extract.add_argument("--batch-size", type=int, default=128, dest="batch_size")
+    p_extract.add_argument("--out", required=True, help="Output .npz path for the extracted activations")
+    p_extract.set_defaults(func=cmd_extract_activations)
 
     return parser
 
