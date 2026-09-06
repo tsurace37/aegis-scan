@@ -14,7 +14,12 @@ artifact and save the resulting model checkpoint.
 checkpoint, run every sample back through it, and save one named layer's
 activations to disk for stage 05's detectors to consume.
 
-Later stages (detect, fuse, evaluate, report) will be added as further
+`aegis-scan detect` runs stage 05: score those activations with two
+independent methods (spectral signature analysis, activation
+clustering), neither of which is shown stage 02's ground-truth poison
+mask -- that's held back for stage 07's evaluation, not used here.
+
+Later stages (fuse, evaluate, report) will be added as further
 subcommands here as they're built.
 """
 
@@ -27,6 +32,8 @@ import numpy as np
 
 from .activations.extract import extract_activations
 from .datasets.loaders import load_benchmark_dataset, load_healthcare_dataset, load_synthetic_dataset
+from .detect.clustering import activation_clustering_flags
+from .detect.spectral import spectral_signature_scores
 from .poison.inject import SquareTrigger, inject_poison
 from .train import TrainConfig, load_checkpoint, save_checkpoint, train_classifier
 
@@ -109,6 +116,43 @@ def cmd_extract_activations(args: argparse.Namespace) -> None:
     print(f"[--] saved to {out_path}")
 
 
+def cmd_detect(args: argparse.Namespace) -> None:
+    print(f"[05] loading labels from {args.data}...")
+    with np.load(args.data) as npz:
+        labels = npz["labels"]
+
+    print(f"[05] loading activations from {args.activations}...")
+    with np.load(args.activations) as npz:
+        activations = npz["activations"]
+
+    if len(activations) != len(labels):
+        raise SystemExit(
+            f"activations ({len(activations)}) and labels ({len(labels)}) don't match in length -- "
+            "did --data and --activations come from the same inject run?"
+        )
+
+    print(f"[05a] spectral signature analysis on {len(activations)} samples, per class...")
+    spectral_scores = spectral_signature_scores(activations, labels)
+    print(f"      score range: [{spectral_scores.min():.4f}, {spectral_scores.max():.4f}]")
+
+    print(f"[05b] activation clustering (k=2 per class, PCA to {args.pca_components}-D)...")
+    clustering_flags = activation_clustering_flags(
+        activations, labels, pca_components=args.pca_components, seed=args.seed
+    )
+    print(f"      flagged {clustering_flags.sum()} / {len(clustering_flags)} samples as minority-cluster")
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        out_path,
+        spectral_scores=spectral_scores,
+        clustering_flags=clustering_flags,
+        labels=labels,
+    )
+    print(f"[--] saved to {out_path}")
+    print("     (both methods ran blind to stage 02's ground-truth poison mask -- see stage 07 for scoring)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis-scan",
@@ -144,6 +188,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_extract.add_argument("--batch-size", type=int, default=128, dest="batch_size")
     p_extract.add_argument("--out", required=True, help="Output .npz path for the extracted activations")
     p_extract.set_defaults(func=cmd_extract_activations)
+
+    p_detect = sub.add_parser(
+        "detect", help="Stage 05: score activations with spectral signature analysis and activation clustering."
+    )
+    p_detect.add_argument("--data", required=True, help="Input .npz path (for labels; from `aegis-scan inject`)")
+    p_detect.add_argument(
+        "--activations", required=True, help="Activations .npz path (from `aegis-scan extract-activations`)"
+    )
+    p_detect.add_argument("--pca-components", type=int, default=10, dest="pca_components")
+    p_detect.add_argument("--seed", type=int, default=42)
+    p_detect.add_argument("--out", required=True, help="Output .npz path for detection results")
+    p_detect.set_defaults(func=cmd_detect)
 
     return parser
 

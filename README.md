@@ -2,7 +2,7 @@
 
 Open-source detection of data poisoning and backdoor attacks in ML classification pipelines, validated across a healthcare-imaging benchmark and a general-purpose benchmark.
 
-**Status: early development.** Stages 01-04 (dataset loading, synthetic poison injection, classifier training, activation extraction) are implemented and tested below. Stages 05-08 (detection, fusion, evaluation, and reporting) are in progress.
+**Status: early development.** Stages 01-05 (dataset loading, synthetic poison injection, classifier training, activation extraction, detection) are implemented and tested below. Stages 06-08 (fusion, evaluation, and reporting) are in progress.
 
 This project is the empirical companion to [*Toward Automated Detection of Data Poisoning and Backdoor Attacks in Healthcare Imaging AI*](https://doi.org/10.5281/zenodo.22431042) (Zenodo, DOI 10.5281/zenodo.22431042), which specifies the methodology this code implements.
 
@@ -16,7 +16,7 @@ Healthcare organizations are deploying AI-enabled diagnostic tools faster than t
 2. **Inject synthetic poison** -- stamp a backdoor trigger onto a subset of images at a configurable rate, which also produces the ground-truth labels used at step 7. *(implemented)*
 3. **Train a classifier** -- a compact ResNet on the poisoned data. *(implemented)*
 4. **Extract activations** -- forward hooks capture intermediate-layer activations. *(implemented)*
-5. **Detect** -- spectral signature analysis and activation clustering, run independently on those activations. *(not yet implemented)*
+5. **Detect** -- spectral signature analysis and activation clustering, run independently on those activations. *(implemented)*
 6. **Fuse scores** -- combine both methods into a per-sample and model-level risk score. *(not yet implemented)*
 7. **Evaluate** -- score detection accuracy (TPR/FPR) against step 2's ground truth. *(not yet implemented)*
 8. **Report** -- map findings to MITRE ATLAS and NIST AI RMF. *(not yet implemented)*
@@ -52,6 +52,14 @@ aegis-scan extract-activations --model models/healthcare_5pct.pt --data data/poi
 
 `train` prints the final epoch's loss/accuracy and saves a checkpoint (weights plus the `in_channels`/`num_classes` needed to reload it). `extract-activations` reloads that checkpoint, runs every sample back through it, and saves the named layer's per-sample activation vectors -- pass any layer name from `SmallResNet` (`layer1`, `layer2`, `layer3` by default, or a deeper path like `layer3.conv2`).
 
+Score those activations with both detection methods:
+
+```bash
+aegis-scan detect --data data/poisoned_healthcare_5pct.npz --activations data/activations_healthcare_5pct.npz --out data/detect_healthcare_5pct.npz
+```
+
+`detect` runs spectral signature analysis and activation clustering independently, per class, on the activations -- both methods are blind to stage 02's `poison_mask`; neither one sees it. It saves each sample's spectral outlier score and its activation-clustering minority-cluster flag, for stage 06 to combine and stage 07 to score against the ground truth.
+
 ## Test
 
 ```bash
@@ -65,6 +73,8 @@ pytest
 - **Why only non-target-class samples are eligible for poisoning:** stamping a trigger on a sample that's already the target class doesn't test whether the trigger caused a misclassification, since its label doesn't actually change. This matches how the backdoor-attack literature sets up the experiment.
 - **Why a hand-written `SmallResNet` instead of `torchvision.models.resnet18`:** torchvision's ResNets assume 224x224 ImageNet-sized input and downsample 4x in the stem alone -- applied to a 28x28 PneumoniaMNIST image, that leaves almost nothing for the residual blocks to work with. `models/resnet.py` adapts to whatever image size and channel count it's given instead.
 - **Why forward hooks instead of changing the model's `forward()`:** stage 04 needs a trained model's intermediate activations without permanently altering how that model behaves as a classifier. A forward hook attaches for the duration of one inference pass and is removed immediately after, so `SmallResNet` stays an ordinary classifier the rest of the time -- and the same extraction code will work against a different architecture later without changes.
+- **Why detection runs per class, not on the whole dataset at once:** both methods look for "this class secretly contains an unnatural sub-pattern" -- spectral signatures find a one-directional fingerprint within a class's activations, activation clustering looks for a distinguishable minority sub-population within a class. Pooling every class together would mostly just rediscover the classes themselves, not a poisoning signal.
+- **Why activation clustering only flags a cluster below `max_minority_fraction` (35% by default):** k-means with k=2 always returns *some* split, even for a class with no real sub-population -- run it on one uniform blob and it still cuts it roughly in half. Only trusting the smaller cluster when it's an actual minority (comfortably above this project's tested 1-10% poisoning rates, but well below an even 50/50 split) avoids mistaking that artifact for a finding.
 
 ## License
 
