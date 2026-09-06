@@ -2,7 +2,7 @@
 
 Open-source detection of data poisoning and backdoor attacks in ML classification pipelines, validated across a healthcare-imaging benchmark and a general-purpose benchmark.
 
-**Status: early development.** Stages 01-06 (dataset loading, synthetic poison injection, classifier training, activation extraction, detection, fusion) are implemented and tested below. Stages 07-08 (evaluation and reporting) are in progress.
+**Status: early development.** Stages 01-07 (dataset loading, synthetic poison injection, classifier training, activation extraction, detection, fusion, evaluation) are implemented and tested below. Stage 08 (reporting) is in progress.
 
 This project is the empirical companion to [*Toward Automated Detection of Data Poisoning and Backdoor Attacks in Healthcare Imaging AI*](https://doi.org/10.5281/zenodo.22431042) (Zenodo, DOI 10.5281/zenodo.22431042), which specifies the methodology this code implements.
 
@@ -18,7 +18,7 @@ Healthcare organizations are deploying AI-enabled diagnostic tools faster than t
 4. **Extract activations** -- forward hooks capture intermediate-layer activations. *(implemented)*
 5. **Detect** -- spectral signature analysis and activation clustering, run independently on those activations. *(implemented)*
 6. **Fuse scores** -- combine both methods into a per-sample and model-level risk score. *(implemented)*
-7. **Evaluate** -- score detection accuracy (TPR/FPR) against step 2's ground truth. *(not yet implemented)*
+7. **Evaluate** -- score detection accuracy (TPR/FPR) against step 2's ground truth. *(implemented)*
 8. **Report** -- map findings to MITRE ATLAS and NIST AI RMF. *(not yet implemented)*
 
 ## Install
@@ -68,6 +68,14 @@ aegis-scan fuse --detect data/detect_healthcare_5pct.npz --out data/fuse_healthc
 
 `fuse` prints a mean fused score plus two model-level statistics: the fraction of samples flagged by *either* detector (higher recall, more permissive), and the fraction flagged by *both* (the headline risk number -- two differently-motivated methods agreeing on the same sample is much stronger evidence than either alone). Still entirely blind to the ground truth; stage 07 is where that finally gets checked.
 
+Finally, check how accurate all of that actually was, against the ground truth that every stage up to this point was never shown:
+
+```bash
+aegis-scan evaluate --inject data/poisoned_healthcare_5pct.npz --detect data/detect_healthcare_5pct.npz --fuse data/fuse_healthcare_5pct.npz --out data/evaluate_healthcare_5pct.json
+```
+
+`evaluate` is the one command in the whole pipeline allowed to look at `poison_mask`. `--detect` and `--fuse` are both optional (pass whichever outputs you have -- at least one is expected), and it prints TPR/FPR/precision for the two boolean flags (clustering, agreement) plus AUROC/average precision/top-k recall for the two continuous scores (spectral, fused), then saves the full report as JSON.
+
 ## Test
 
 ```bash
@@ -85,6 +93,10 @@ pytest
 - **Why activation clustering only flags a cluster below `max_minority_fraction` (35% by default):** k-means with k=2 always returns *some* split, even for a class with no real sub-population -- run it on one uniform blob and it still cuts it roughly in half. Only trusting the smaller cluster when it's an actual minority (comfortably above this project's tested 1-10% poisoning rates, but well below an even 50/50 split) avoids mistaking that artifact for a finding.
 - **Why fusion ranks spectral scores by per-class percentile instead of using the raw scores:** spectral signature scores aren't comparable across classes -- each class gets its own SVD and its own scale. Converting to a 0-1 rank within each class first puts every class on the same footing before averaging with the clustering flag, without assuming anything about how many samples are actually poisoned.
 - **Why "flagged by both detectors" is the headline risk number, not "flagged by either":** the two methods have different blind spots, so agreement between them is much less likely to happen by chance than either one alone. Testing this on a synthetic 10%-poisoned run bore it out directly: the "both" agreement flag had zero false positives (though it caught only 58 of the 100 poisoned samples), while ranking all samples by the continuous fused score put 99 of the 100 poisoned samples in the top 100 -- precision and recall trade off differently depending on which output you read.
+- **Why `evaluate` rescales spectral scores by per-class percentile before scoring them, instead of using the raw scores directly:** a single global AUROC computed on raw spectral scores would be meaningless, for the same reason fusion can't average them directly -- each class gets its own SVD and its own arbitrary scale in stage 05. Reusing `fuse.py`'s `percentile_rank_per_class` here (rather than duplicating that logic) means the spectral numbers reported by `evaluate` are on the exact same footing as the ones that went into the fused score.
+- **Why `evaluate`'s metrics return NaN instead of raising when a class is undefined:** precision is undefined when nothing was flagged (0/0), and AUROC/average precision are undefined when every sample -- or no sample -- is truly poisoned (there's no "other class" to rank against). Both are real situations a synthetic run at an extreme poisoning rate can hit; NaN propagates that "not applicable here" signal instead of forcing a crash or a misleading 0.
+- **Why `top_k_recall` is reported alongside AUROC/average precision:** AUROC and AP are the right metrics for comparing detectors in the abstract, but neither answers a concrete question a reviewer will actually ask: "if I flag as many samples as are truly poisoned, how many do I actually catch?" `top_k_recall` answers exactly that, in the same terms used for the manual sanity checks run during development (e.g. "99 of the 100 poisoned samples were in the top 100 by fused score").
+- **Why `evaluate --detect` and `--fuse` are both optional (but at least one is expected):** stage 07 is meant to be run against whatever's available -- just stage 05's raw outputs, just stage 06's fused ones, or (typically) both side by side. Requiring both would make it impossible to spot-check stage 05 in isolation before fusion is even run.
 
 ## License
 

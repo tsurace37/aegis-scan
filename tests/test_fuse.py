@@ -3,14 +3,14 @@
 import numpy as np
 import pytest
 
-from aegis_scan.fuse import _percentile_rank_per_class, fuse_scores
+from aegis_scan.fuse import percentile_rank_per_class, fuse_scores
 
 
 def test_percentile_rank_is_zero_to_one_within_each_class():
     values = np.array([10.0, 20.0, 30.0, 40.0, 1.0, 2.0, 3.0])
     labels = np.array([0, 0, 0, 0, 1, 1, 1])
 
-    ranks = _percentile_rank_per_class(values, labels)
+    ranks = percentile_rank_per_class(values, labels)
 
     assert ranks.min() >= 0.0
     assert ranks.max() <= 1.0
@@ -25,7 +25,7 @@ def test_percentile_rank_single_sample_class_is_zero_not_error():
     values = np.array([5.0, 1.0, 2.0])
     labels = np.array([0, 1, 1])  # class 0 has exactly one sample
 
-    ranks = _percentile_rank_per_class(values, labels)
+    ranks = percentile_rank_per_class(values, labels)
     assert ranks[0] == 0.0
 
 

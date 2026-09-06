@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 
 
-def _percentile_rank_per_class(values: np.ndarray, labels: np.ndarray) -> np.ndarray:
+def percentile_rank_per_class(values: np.ndarray, labels: np.ndarray) -> np.ndarray:
     """Rescale `values` to a 0-1 rank within each class, computed independently per class.
 
     Spectral signature scores aren't comparable across classes -- each
@@ -29,6 +29,11 @@ def _percentile_rank_per_class(values: np.ndarray, labels: np.ndarray) -> np.nda
     class on the same footing before fusing with the clustering signal,
     without assuming anything about how many samples are actually
     poisoned anywhere -- it's a relative ordering, not a threshold.
+
+    Public (not a fuse.py-only helper) because stage 07 needs the exact
+    same rescaling to evaluate spectral scores fairly -- computing a
+    single global AUROC on raw spectral scores would be distorted by
+    each class's own arbitrary scale, the same problem fusion solves.
     """
     ranks = np.zeros(len(values), dtype=np.float64)
     for class_label in np.unique(labels):
@@ -81,7 +86,7 @@ def fuse_scores(
             f"and labels ({len(labels)}) must all be the same length"
         )
 
-    spectral_rank = _percentile_rank_per_class(spectral_scores, labels)
+    spectral_rank = percentile_rank_per_class(spectral_scores, labels)
     clustering_score = clustering_flags.astype(np.float64)
 
     fused_scores = 0.5 * spectral_rank + 0.5 * clustering_score

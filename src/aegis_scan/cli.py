@@ -24,13 +24,20 @@ outputs into one per-sample score and a few model-level risk
 statistics -- still without looking at the ground truth, which stays
 held back for stage 07.
 
-Later stages (evaluate, report) will be added as further subcommands
-here as they're built.
+`aegis-scan evaluate` runs stage 07: this is the one command in the
+whole pipeline allowed to look at stage 02's ground-truth poison
+mask, and it uses it only to score how well stages 05-06 did --
+TPR/FPR for the clustering and agreement flags, AUROC/average
+precision/top-k recall for the spectral and fused scores.
+
+Later stages (report) will be added as further subcommands here as
+they're built.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +46,7 @@ from .activations.extract import extract_activations
 from .datasets.loaders import load_benchmark_dataset, load_healthcare_dataset, load_synthetic_dataset
 from .detect.clustering import activation_clustering_flags
 from .detect.spectral import spectral_signature_scores
+from .evaluate import evaluate
 from .fuse import fuse_scores
 from .poison.inject import SquareTrigger, inject_poison
 from .train import TrainConfig, load_checkpoint, save_checkpoint, train_classifier
@@ -191,6 +199,70 @@ def cmd_fuse(args: argparse.Namespace) -> None:
     print(f"[--] saved to {out_path}")
 
 
+def cmd_evaluate(args: argparse.Namespace) -> None:
+    print(f"[07] loading ground truth from {args.inject}...")
+    with np.load(args.inject) as npz:
+        poison_mask = npz["poison_mask"]
+
+    spectral_scores = clustering_flags = labels = None
+    if args.detect:
+        print(f"[07] loading detection results from {args.detect}...")
+        with np.load(args.detect) as npz:
+            spectral_scores = npz["spectral_scores"]
+            clustering_flags = npz["clustering_flags"]
+            labels = npz["labels"]
+
+    fused_scores = agreement = None
+    if args.fuse:
+        print(f"[07] loading fusion results from {args.fuse}...")
+        with np.load(args.fuse) as npz:
+            fused_scores = npz["fused_scores"]
+            agreement = npz["agreement"]
+
+    print(f"[07] evaluating against ground truth ({poison_mask.sum()} / {len(poison_mask)} truly poisoned)...")
+    report = evaluate(
+        poison_mask,
+        labels=labels,
+        spectral_scores=spectral_scores,
+        clustering_flags=clustering_flags,
+        fused_scores=fused_scores,
+        agreement_flags=agreement,
+    )
+
+    print(f"      poison rate:                 {report.poison_rate:.3%}")
+    if report.clustering is not None:
+        m = report.clustering
+        print(f"      clustering   TPR={m.tpr:.3%}  FPR={m.fpr:.3%}  precision={m.precision:.3%}  (tp={m.tp} fp={m.fp} fn={m.fn} tn={m.tn})")
+    if report.agreement is not None:
+        m = report.agreement
+        print(f"      agreement    TPR={m.tpr:.3%}  FPR={m.fpr:.3%}  precision={m.precision:.3%}  (tp={m.tp} fp={m.fp} fn={m.fn} tn={m.tn})")
+    if report.spectral is not None:
+        m = report.spectral
+        print(f"      spectral     AUROC={m.auroc:.4f}  AP={m.average_precision:.4f}  top-k recall={m.top_k_recall:.3%}")
+    if report.fused is not None:
+        m = report.fused
+        print(f"      fused        AUROC={m.auroc:.4f}  AP={m.average_precision:.4f}  top-k recall={m.top_k_recall:.3%}  <- headline accuracy number")
+
+    def _metrics_dict(m) -> dict | None:
+        return None if m is None else {k: v for k, v in vars(m).items()}
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(
+            {
+                "poison_rate": report.poison_rate,
+                "clustering": _metrics_dict(report.clustering),
+                "agreement": _metrics_dict(report.agreement),
+                "spectral": _metrics_dict(report.spectral),
+                "fused": _metrics_dict(report.fused),
+            },
+            indent=2,
+        )
+    )
+    print(f"[--] saved to {out_path}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis-scan",
@@ -250,6 +322,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_fuse.add_argument("--out", required=True, help="Output .npz path for fused results")
     p_fuse.set_defaults(func=cmd_fuse)
+
+    p_evaluate = sub.add_parser(
+        "evaluate", help="Stage 07: score stages 05-06's outputs against stage 02's ground truth."
+    )
+    p_evaluate.add_argument(
+        "--inject", required=True, help="Original inject .npz path (for poison_mask ground truth)"
+    )
+    p_evaluate.add_argument(
+        "--detect", default=None, help="Detection results .npz path (from `aegis-scan detect`), optional"
+    )
+    p_evaluate.add_argument(
+        "--fuse", default=None, help="Fusion results .npz path (from `aegis-scan fuse`), optional"
+    )
+    p_evaluate.add_argument("--out", required=True, help="Output .json path for the evaluation report")
+    p_evaluate.set_defaults(func=cmd_evaluate)
 
     return parser
 
