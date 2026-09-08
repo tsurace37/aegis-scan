@@ -6,6 +6,9 @@ dist/
 .venv/
 venv/
 .pytest_cache/
+.pytest_tmp/
 data/
+models/
+runs/
 *.npz
 .DS_Store

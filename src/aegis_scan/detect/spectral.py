@@ -21,6 +21,7 @@ between unrelated classes.
 from __future__ import annotations
 
 import numpy as np
+import scipy.linalg
 
 
 def spectral_signature_scores(activations: np.ndarray, labels: np.ndarray) -> np.ndarray:
@@ -59,8 +60,13 @@ def spectral_signature_scores(activations: np.ndarray, labels: np.ndarray) -> np
         centered = class_activations - class_activations.mean(axis=0, keepdims=True)
 
         # full_matrices=False: only the top min(n_samples, n_features)
-        # singular vectors are needed, not the full square factorization
-        _, _, vt = np.linalg.svd(centered, full_matrices=False)
+        # singular vectors are needed, not the full square factorization.
+        # scipy's 'gesvd' driver (not numpy's default 'gesdd') because
+        # gesdd's divide-and-conquer workspace query reliably fails with
+        # MemoryError on Windows/OpenBLAS for a class this large (e.g.
+        # ~5000x8192 activations from a full CIFAR-10 run) even with
+        # plenty of RAM free -- gesvd is slower but doesn't have that bug.
+        _, _, vt = scipy.linalg.svd(centered, full_matrices=False, lapack_driver="gesvd")
         top_direction = vt[0]
 
         projection = centered @ top_direction
