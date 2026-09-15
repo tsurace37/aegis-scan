@@ -121,3 +121,31 @@ def test_render_markdown_only_includes_metrics_that_are_present():
     assert "Activation clustering:" not in md
     assert "Both detectors agree" not in md
     assert "Spectral signature analysis:" not in md
+
+
+def test_report_omits_coverage_section_when_no_labels_supplied():
+    """Default behavior (no labels) must stay exactly as before this
+    feature was added -- no coverage section, no class_coverage field
+    populated."""
+    report = generate_report(_fake_evaluation())
+    assert report.class_coverage is None
+    assert "Class-balance coverage" not in render_markdown(report)
+
+
+def test_report_includes_coverage_section_when_labels_supplied():
+    """Integration test for the report.py <-> risk.py wiring itself,
+    not just each module in isolation: a small, deliberately imbalanced
+    label array should produce both a populated class_coverage list and
+    a rendered section naming the vulnerable class."""
+    import numpy as np
+
+    labels = np.array([0] * 10 + [1] * 90)  # class 0 is a 10% minority -> low coverage
+    report = generate_report(_fake_evaluation(), labels=labels)
+
+    assert report.class_coverage is not None
+    assert len(report.class_coverage) == 2
+    assert report.class_coverage[0].class_label == 0  # smallest/most vulnerable class sorts first
+
+    md = render_markdown(report)
+    assert "Class-balance coverage" in md
+    assert "low coverage" in md
