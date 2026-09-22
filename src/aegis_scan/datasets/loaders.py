@@ -1,7 +1,7 @@
 """
 Stage 01 -- source datasets.
 
-Loads two image-classification datasets into one common, "poisonable"
+Loads image-classification datasets into one common, "poisonable"
 format:
 
   * a healthcare-imaging benchmark (PneumoniaMNIST -- a lightweight
@@ -11,12 +11,18 @@ format:
   * a non-healthcare benchmark (CIFAR-10), to test whether a detection
     method that works on chest X-rays generalizes to a completely
     different image domain
+  * a custom loader (`load_custom_dataset`) for any other dataset,
+    provided it's already been packaged into this module's canonical
+    `.npz` shape -- the escape hatch that makes the rest of the
+    pipeline usable on data this project never anticipated, without
+    writing a new loader for every new source
 
-Both loaders return a `PoisonableDataset`: a plain container holding
+Every loader returns a `PoisonableDataset`: a plain container holding
 images as a float32 NCHW numpy array (values in [0, 1]) and integer
-labels, independent of whichever library the data came from. Stage 02
-(poison injection) and stage 03 (training) are written against this one
-shape, so they don't need to know or care which dataset produced it.
+labels, independent of whichever library or file the data came from.
+Stage 02 (poison injection) and stage 03 (training) are written against
+this one shape, so they don't need to know or care which dataset
+produced it.
 """
 
 from __future__ import annotations
@@ -118,3 +124,46 @@ def load_benchmark_dataset(split: str = "train", download_root: str = "./data") 
     images = images.transpose(0, 3, 1, 2)  # NHWC -> NCHW
     labels = np.array(ds.targets, dtype=np.int64)
     return PoisonableDataset(images=images, labels=labels, name="cifar10", class_names=list(ds.classes))
+
+
+def load_custom_dataset(path: str, split: str = "train") -> PoisonableDataset:
+    """Load any dataset already packaged into this module's canonical `.npz` shape.
+
+    This is the generalization path for datasets this project never
+    wrote a dedicated loader for: preprocess your own data once into a
+    `.npz` file with an `images` array (float32, NCHW, values in
+    [0, 1]) and a `labels` array (integer class indices), and every
+    downstream stage -- injection, training, detection, evaluation,
+    coverage, reporting -- runs against it unmodified, exactly as it
+    does for the two built-in loaders above.
+
+    `split` is accepted only so this loader's call signature matches
+    the others (`aegis-scan inject --dataset custom --split test` reads
+    naturally) -- it has no effect here. A custom `.npz` is expected to
+    already be the one split the caller wants; producing separate
+    train/test files is the caller's responsibility before this loader
+    ever sees them.
+
+    `PoisonableDataset.__post_init__` (above) does the actual shape and
+    dtype validation, so a malformed file fails here with a specific,
+    actionable error rather than a confusing crash several stages later.
+    """
+    from pathlib import Path
+
+    with np.load(path) as data:
+        if "images" not in data or "labels" not in data:
+            raise ValueError(
+                f"{path} must contain 'images' and 'labels' arrays in aegis-scan's "
+                f"canonical shape (images: float32 NCHW in [0,1], labels: integer "
+                f"class indices) -- found keys: {list(data.keys())}"
+            )
+        images = data["images"].astype(np.float32)
+        labels = data["labels"].astype(np.int64)
+
+    class_names = [str(c) for c in sorted(set(labels.tolist()))]
+    return PoisonableDataset(
+        images=images,
+        labels=labels,
+        name=Path(path).stem,
+        class_names=class_names,
+    )

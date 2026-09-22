@@ -46,11 +46,17 @@ from pathlib import Path
 import numpy as np
 
 from .activations.extract import extract_activations
-from .datasets.loaders import load_benchmark_dataset, load_healthcare_dataset, load_synthetic_dataset
+from .datasets.loaders import (
+    load_benchmark_dataset,
+    load_custom_dataset,
+    load_healthcare_dataset,
+    load_synthetic_dataset,
+)
 from .detect.clustering import activation_clustering_flags
 from .detect.spectral import spectral_signature_scores
 from .evaluate import evaluate
 from .fuse import fuse_scores
+from .models.registry import ARCHITECTURES, DEFAULT_ARCHITECTURE
 from .report import generate_report, render_markdown
 from .poison.inject import SquareTrigger, inject_poison
 from .risk import class_poisoning_thresholds, render_coverage_report
@@ -62,12 +68,26 @@ DATASET_LOADERS = {
     "synthetic": load_synthetic_dataset,
 }
 
+# Not part of DATASET_LOADERS: every entry there is called uniformly as
+# `loader(split=args.split)`, but `load_custom_dataset` also needs a
+# file path, so `cmd_inject` handles "custom" as its own branch instead
+# of forcing it into that shared calling convention.
+CUSTOM_DATASET_NAME = "custom"
+
 
 def cmd_inject(args: argparse.Namespace) -> None:
-    loader = DATASET_LOADERS[args.dataset]
-
-    print(f"[01] loading '{args.dataset}' dataset (split={args.split})...")
-    ds = loader(split=args.split)
+    if args.dataset == CUSTOM_DATASET_NAME:
+        if not args.data_path:
+            raise SystemExit(
+                f"--dataset {CUSTOM_DATASET_NAME} requires --data-path (a .npz with "
+                f"'images'/'labels' arrays in aegis-scan's canonical shape)"
+            )
+        print(f"[01] loading custom dataset from {args.data_path} (split={args.split})...")
+        ds = load_custom_dataset(args.data_path, split=args.split)
+    else:
+        loader = DATASET_LOADERS[args.dataset]
+        print(f"[01] loading '{args.dataset}' dataset (split={args.split})...")
+        ds = loader(split=args.split)
     print(f"     {len(ds)} images, shape {ds.images.shape[1:]}, classes={ds.class_names}")
 
     print(
@@ -103,9 +123,11 @@ def cmd_train(args: argparse.Namespace) -> None:
         images, labels = npz["images"], npz["labels"]
     print(f"     {len(images)} images, shape {images.shape[1:]}, {int(labels.max()) + 1} classes")
 
-    config = TrainConfig(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, seed=args.seed)
+    config = TrainConfig(
+        epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, seed=args.seed, arch=args.arch
+    )
     print(
-        f"[03] training SmallResNet: epochs={config.epochs}, batch_size={config.batch_size}, "
+        f"[03] training {config.arch}: epochs={config.epochs}, batch_size={config.batch_size}, "
         f"lr={config.lr}, seed={config.seed}..."
     )
     result = train_classifier(images, labels, config=config)
@@ -328,7 +350,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_inject = sub.add_parser("inject", help="Stages 01-02: load a dataset and inject a synthetic backdoor.")
-    p_inject.add_argument("--dataset", choices=list(DATASET_LOADERS), required=True)
+    p_inject.add_argument(
+        "--dataset", choices=list(DATASET_LOADERS) + [CUSTOM_DATASET_NAME], required=True
+    )
+    p_inject.add_argument(
+        "--data-path",
+        default=None,
+        dest="data_path",
+        help=(
+            f"Path to a .npz with 'images'/'labels' arrays in aegis-scan's canonical "
+            f"shape (required when --dataset {CUSTOM_DATASET_NAME}; ignored otherwise)"
+        ),
+    )
     p_inject.add_argument("--split", default="train")
     p_inject.add_argument("--rate", type=float, required=True, help="Poisoning rate, e.g. 0.05 for 5%%")
     p_inject.add_argument("--target-label", type=int, default=0, dest="target_label")
@@ -343,6 +376,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_train.add_argument("--batch-size", type=int, default=64, dest="batch_size")
     p_train.add_argument("--lr", type=float, default=1e-3)
     p_train.add_argument("--seed", type=int, default=42)
+    p_train.add_argument(
+        "--arch",
+        choices=list(ARCHITECTURES),
+        default=DEFAULT_ARCHITECTURE,
+        help=f"Model architecture to train (default: {DEFAULT_ARCHITECTURE})",
+    )
     p_train.add_argument("--out", required=True, help="Output checkpoint (.pt) path")
     p_train.set_defaults(func=cmd_train)
 

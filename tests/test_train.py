@@ -64,3 +64,72 @@ def test_checkpoint_round_trip_preserves_predictions(tmp_path):
         reloaded_out = reloaded(torch.from_numpy(images))
 
     assert torch.allclose(original_out, reloaded_out, atol=1e-6)
+
+
+def test_default_arch_is_small_resnet():
+    images, labels = make_toy_data(n=16)
+    result = train_classifier(images, labels, config=TrainConfig(epochs=1, batch_size=8))
+    assert result.arch == "small_resnet"
+
+
+def test_resnet18_arch_trains_and_matches_data_shape():
+    # 1-channel, small (16x16) input on purpose: this is the case that
+    # would break with torchvision's stock resnet18 stem (which assumes
+    # ImageNet-sized input) -- confirms the adapted stem in
+    # resnet18_small.py actually handles it.
+    images, labels = make_toy_data(n=16, channels=1, size=16, num_classes=3)
+    result = train_classifier(
+        images, labels, config=TrainConfig(epochs=1, batch_size=8, arch="resnet18")
+    )
+    assert result.arch == "resnet18"
+    assert result.in_channels == 1
+    assert result.num_classes == 3
+
+    model = result.model
+    model.eval()
+    with torch.no_grad():
+        logits = model(torch.from_numpy(images[:5]))
+    assert logits.shape == (5, 3)
+
+
+def test_checkpoint_round_trip_preserves_arch(tmp_path):
+    images, labels = make_toy_data(n=16, channels=3, size=20)
+    result = train_classifier(
+        images, labels, config=TrainConfig(epochs=1, batch_size=8, arch="resnet18")
+    )
+
+    ckpt_path = tmp_path / "resnet18_model.pt"
+    save_checkpoint(result, ckpt_path)
+
+    reloaded = load_checkpoint(ckpt_path)
+    with torch.no_grad():
+        original_out = result.model.eval()(torch.from_numpy(images))
+        reloaded_out = reloaded(torch.from_numpy(images))
+    assert torch.allclose(original_out, reloaded_out, atol=1e-6)
+
+
+def test_load_checkpoint_defaults_to_small_resnet_when_arch_key_missing(tmp_path):
+    """Every checkpoint this project produced before the architecture
+    registry existed (including the ones behind the paper's published
+    results) has no 'arch' key at all. This simulates exactly that --
+    a hand-built checkpoint dict missing the key -- and confirms
+    `load_checkpoint` still loads it correctly rather than erroring.
+    """
+    images, labels = make_toy_data(n=16)
+    result = train_classifier(images, labels, config=TrainConfig(epochs=1, batch_size=8))
+
+    ckpt_path = tmp_path / "legacy_model.pt"
+    legacy_checkpoint = {
+        "model_state_dict": result.model.state_dict(),
+        "in_channels": result.in_channels,
+        "num_classes": result.num_classes,
+        "history": result.history,
+        # deliberately no "arch" key
+    }
+    torch.save(legacy_checkpoint, ckpt_path)
+
+    reloaded = load_checkpoint(ckpt_path)
+    with torch.no_grad():
+        original_out = result.model.eval()(torch.from_numpy(images))
+        reloaded_out = reloaded(torch.from_numpy(images))
+    assert torch.allclose(original_out, reloaded_out, atol=1e-6)

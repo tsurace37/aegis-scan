@@ -23,7 +23,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from .models.resnet import SmallResNet
+from .models.registry import DEFAULT_ARCHITECTURE, build_model
 
 
 @dataclass
@@ -33,6 +33,7 @@ class TrainConfig:
     lr: float = 1e-3
     seed: int = 42
     device: str = "cpu"
+    arch: str = DEFAULT_ARCHITECTURE
 
 
 @dataclass
@@ -41,6 +42,7 @@ class TrainResult:
     history: list[dict[str, float]] = field(default_factory=list)
     in_channels: int = 0
     num_classes: int = 0
+    arch: str = DEFAULT_ARCHITECTURE
 
 
 def train_classifier(
@@ -48,12 +50,12 @@ def train_classifier(
     labels: np.ndarray,
     config: TrainConfig | None = None,
 ) -> TrainResult:
-    """Train a `SmallResNet` on `images`/`labels` (stage 02's output shape) and return it.
+    """Train `config.arch` (default: `SmallResNet`) on `images`/`labels` (stage 02's output shape) and return it.
 
     `in_channels` and `num_classes` are read off the data itself rather
     than passed in separately, so this works unchanged whether it's
     handed the 1-channel healthcare set or the 3-channel benchmark set --
-    matching stage 01's design goal of both datasets sharing one shape.
+    matching stage 01's design goal of every dataset sharing one shape.
     """
     config = config or TrainConfig()
     torch.manual_seed(config.seed)
@@ -62,7 +64,7 @@ def train_classifier(
     num_classes = int(labels.max()) + 1
     device = torch.device(config.device)
 
-    model = SmallResNet(in_channels=in_channels, num_classes=num_classes).to(device)
+    model = build_model(config.arch, in_channels, num_classes).to(device)
 
     dataset = TensorDataset(torch.from_numpy(images), torch.from_numpy(labels))
     loader = DataLoader(
@@ -101,18 +103,21 @@ def train_classifier(
             }
         )
 
-    return TrainResult(model=model, history=history, in_channels=in_channels, num_classes=num_classes)
+    return TrainResult(
+        model=model, history=history, in_channels=in_channels, num_classes=num_classes, arch=config.arch
+    )
 
 
 def save_checkpoint(result: TrainResult, path: str | Path) -> None:
     """Save weights plus the architecture metadata `load_checkpoint` needs to rebuild the model.
 
     Saving just `model.state_dict()` isn't enough on its own -- reloading
-    it later requires re-constructing a `SmallResNet` with the exact same
-    `in_channels`/`num_classes` it was trained with first. Bundling those
-    two numbers into the checkpoint means stage 04 (or anyone else) can
-    load a trained model from disk without having to separately remember
-    or re-derive which dataset it came from.
+    it later requires re-constructing the same architecture with the
+    exact same `in_channels`/`num_classes` it was trained with first.
+    Bundling `arch` plus those two numbers into the checkpoint means
+    stage 04 (or anyone else) can load a trained model from disk without
+    having to separately remember or re-derive which dataset -- or which
+    architecture -- it came from.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,15 +125,26 @@ def save_checkpoint(result: TrainResult, path: str | Path) -> None:
         "model_state_dict": result.model.state_dict(),
         "in_channels": result.in_channels,
         "num_classes": result.num_classes,
+        "arch": result.arch,
         "history": result.history,
     }
     torch.save(checkpoint, path)
 
 
 def load_checkpoint(path: str | Path, device: str = "cpu") -> nn.Module:
-    """Rebuild a `SmallResNet` from a checkpoint saved by `save_checkpoint`, in eval mode."""
+    """Rebuild a model from a checkpoint saved by `save_checkpoint`, in eval mode.
+
+    A checkpoint saved before the architecture registry existed has no
+    `arch` key at all -- every one of those was trained as a
+    `SmallResNet` (there was no other option at the time), so a missing
+    key defaults to `DEFAULT_ARCHITECTURE` ("small_resnet") rather than
+    raising an error. This is what keeps every checkpoint this project
+    has already produced, including the ones behind the paper's
+    published results, loadable unchanged.
+    """
     checkpoint = torch.load(path, map_location=device, weights_only=False)
-    model = SmallResNet(in_channels=checkpoint["in_channels"], num_classes=checkpoint["num_classes"])
+    arch = checkpoint.get("arch", DEFAULT_ARCHITECTURE)
+    model = build_model(arch, checkpoint["in_channels"], checkpoint["num_classes"])
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
