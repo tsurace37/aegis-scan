@@ -53,6 +53,7 @@ from .evaluate import evaluate
 from .fuse import fuse_scores
 from .report import generate_report, render_markdown
 from .poison.inject import SquareTrigger, inject_poison
+from .risk import class_poisoning_thresholds, render_coverage_report
 from .train import TrainConfig, load_checkpoint, save_checkpoint, train_classifier
 
 DATASET_LOADERS = {
@@ -267,12 +268,50 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     print(f"[--] saved to {out_path}")
 
 
+def cmd_coverage(args: argparse.Namespace) -> None:
+    """A fast, standalone pre-flight check: needs only a dataset's labels
+    (e.g. from `aegis-scan inject`'s saved output), not a trained model,
+    activations, or a detection run -- see risk.py for what it computes
+    and why. Unlike every other subcommand, --out is optional here: this
+    is meant to be a quick check, and printing straight to the terminal
+    is often enough."""
+    print(f"[--] loading labels from {args.data}...")
+    with np.load(args.data) as npz:
+        labels = npz["labels"]
+
+    print(f"[--] computing class-balance coverage ({len(np.unique(labels))} classes, "
+          f"max-minority-fraction={args.max_minority_fraction})...")
+    coverage = class_poisoning_thresholds(labels, max_minority_fraction=args.max_minority_fraction)
+    report_text = render_coverage_report(coverage)
+
+    low_coverage = [c for c in coverage if c.is_low_coverage]
+    if low_coverage:
+        print(f"      {len(low_coverage)} / {len(coverage)} classes flagged low-coverage")
+    else:
+        print(f"      no classes flagged low-coverage")
+
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(report_text)
+        print(f"[--] saved to {out_path}")
+    else:
+        print()
+        print(report_text)
+
+
 def cmd_report(args: argparse.Namespace) -> None:
     print(f"[08] loading evaluation results from {args.evaluate}...")
     evaluation = json.loads(Path(args.evaluate).read_text())
 
+    labels = None
+    if args.inject:
+        print(f"[08] loading labels from {args.inject} for class-balance coverage...")
+        with np.load(args.inject) as npz:
+            labels = npz["labels"]
+
     print(f"[08] mapping findings to MITRE ATLAS + NIST AI RMF for dataset '{args.dataset}'...")
-    report = generate_report(evaluation, dataset=args.dataset)
+    report = generate_report(evaluation, dataset=args.dataset, labels=labels)
     print(f"      {report.headline}")
 
     out_path = Path(args.out)
@@ -361,8 +400,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_report.add_argument("--evaluate", required=True, help="Evaluation report .json path (from `aegis-scan evaluate`)")
     p_report.add_argument("--dataset", default="unspecified", help="Dataset name/label to show in the report")
+    p_report.add_argument(
+        "--inject",
+        default=None,
+        help="Optional: inject .npz path, adds a class-balance coverage section (see `aegis-scan coverage`)",
+    )
     p_report.add_argument("--out", required=True, help="Output .md path for the assurance report")
     p_report.set_defaults(func=cmd_report)
+
+    p_coverage = sub.add_parser(
+        "coverage",
+        help=(
+            "Fast pre-flight check: which classes' size alone would blind the clustering "
+            "guard, and at what poisoning rate. Needs only labels -- no training or detection run."
+        ),
+    )
+    p_coverage.add_argument(
+        "--data", required=True, help="Any .npz with a 'labels' array (e.g. from `aegis-scan inject`)"
+    )
+    p_coverage.add_argument(
+        "--max-minority-fraction",
+        type=float,
+        default=0.35,
+        dest="max_minority_fraction",
+        help="Must match the clustering guard's own value (default 0.35) to give an accurate estimate",
+    )
+    p_coverage.add_argument("--out", default=None, help="Optional output .md path; prints to stdout if omitted")
+    p_coverage.set_defaults(func=cmd_coverage)
 
     return parser
 

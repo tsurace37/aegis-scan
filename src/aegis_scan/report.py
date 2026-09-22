@@ -20,6 +20,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+import numpy as np
+
+from .risk import ClassCoverage, class_poisoning_thresholds, render_coverage_report
+
 # MITRE ATLAS techniques relevant to what this project tests for. Each
 # entry's `relevance` says precisely how it maps to aegis-scan's own
 # attack model (a BadNets-style trigger stamped into training images,
@@ -50,14 +54,17 @@ ATLAS_TECHNIQUES = [
     },
     {
         "id": "AML.T0018",
-        "name": "Manipulate AI Model",
+        "name": "Backdoor ML Model",
         "relevance": (
             "The end state of a successful poisoning attack: a persistent, "
             "hidden change in the trained model's behavior. aegis-scan "
             "doesn't inspect model weights directly the way this "
-            "technique's 'Poison AI Model' sub-technique (AML.T0018.000) "
+            "technique's 'Poison ML Model' sub-technique (AML.T0018.000) "
             "describes -- it infers the same outcome indirectly, from how "
-            "poisoned training data reshapes a layer's activations."
+            "poisoned training data reshapes a layer's activations. Name "
+            "verified directly against current MITRE ATLAS technique data "
+            "(atlas.mitre.org) as of this fix, since an earlier version of "
+            "this file used a non-standard label."
         ),
     },
 ]
@@ -137,13 +144,29 @@ class AssuranceReport:
     atlas_techniques: list[dict[str, str]]
     nist_ai_rmf_measure: dict[str, str]
     headline: str
+    class_coverage: list[ClassCoverage] | None = None
 
 
-def generate_report(evaluation: dict[str, Any], *, dataset: str = "unspecified") -> AssuranceReport:
+def generate_report(
+    evaluation: dict[str, Any],
+    *,
+    dataset: str = "unspecified",
+    labels: np.ndarray | None = None,
+) -> AssuranceReport:
     """Wrap stage 07's evaluation dict (its saved JSON, loaded back in) with framework mappings and a headline.
 
     `evaluation` is exactly the dict `aegis-scan evaluate` saves: `poison_rate`
     plus optional `clustering`/`agreement`/`spectral`/`fused` metric dicts.
+
+    `labels` is optional and unrelated to stage 07's output -- when
+    supplied (e.g. read back from `aegis-scan inject`'s saved `labels`
+    array), a class-balance coverage section (see `risk.py`) is computed
+    and included. This is deliberately independent of everything else in
+    this report: it doesn't need a trained model, activations, or a
+    detection run, only the dataset's class distribution, so it's
+    available even for a report generated before those stages ever run.
+    Omitting `labels` (the default) preserves this function's existing
+    behavior exactly, for callers that don't have that array on hand.
     """
     return AssuranceReport(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -152,6 +175,7 @@ def generate_report(evaluation: dict[str, Any], *, dataset: str = "unspecified")
         atlas_techniques=ATLAS_TECHNIQUES,
         nist_ai_rmf_measure=NIST_AI_RMF_MEASURE,
         headline=_build_headline(evaluation),
+        class_coverage=class_poisoning_thresholds(labels) if labels is not None else None,
     )
 
 
@@ -218,5 +242,8 @@ def render_markdown(report: AssuranceReport) -> str:
         report.nist_ai_rmf_measure["how_this_report_satisfies_it"],
         "",
     ]
+
+    if report.class_coverage is not None:
+        lines.append(render_coverage_report(report.class_coverage))
 
     return "\n".join(lines)
