@@ -57,7 +57,7 @@ from .detect.spectral import spectral_signature_scores
 from .evaluate import evaluate
 from .fuse import fuse_scores
 from .models.registry import ARCHITECTURES, DEFAULT_ARCHITECTURE
-from .report import generate_report, render_markdown
+from .report import generate_report, render_html, render_markdown
 from .poison.inject import SquareTrigger, inject_poison
 from .risk import class_poisoning_thresholds, render_coverage_report
 from .train import TrainConfig, load_checkpoint, save_checkpoint, train_classifier
@@ -338,7 +338,10 @@ def cmd_report(args: argparse.Namespace) -> None:
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(render_markdown(report))
+    if out_path.suffix.lower() == ".html":
+        out_path.write_text(render_html(report))
+    else:
+        out_path.write_text(render_markdown(report))
     print(f"[--] saved to {out_path}")
 
 
@@ -444,7 +447,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional: inject .npz path, adds a class-balance coverage section (see `aegis-scan coverage`)",
     )
-    p_report.add_argument("--out", required=True, help="Output .md path for the assurance report")
+    p_report.add_argument(
+        "--out",
+        required=True,
+        help="Output path for the assurance report -- .html renders a styled, self-contained "
+        "HTML file (open in a browser and Print > Save as PDF); any other extension (e.g. .md) "
+        "renders Markdown",
+    )
     p_report.set_defaults(func=cmd_report)
 
     p_coverage = sub.add_parser(

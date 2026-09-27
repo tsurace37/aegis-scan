@@ -16,6 +16,7 @@ wrong in a security report is worse than leaving it out.
 
 from __future__ import annotations
 
+import html as html_lib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -247,3 +248,152 @@ def render_markdown(report: AssuranceReport) -> str:
         lines.append(render_coverage_report(report.class_coverage))
 
     return "\n".join(lines)
+
+
+def _render_coverage_html(coverages: list[ClassCoverage]) -> str:
+    """HTML counterpart of `risk.render_coverage_report` -- same content,
+    same wording, as a table instead of a Markdown pipe-table."""
+    if not coverages:
+        return "<h2>Class-balance coverage</h2>\n<p>No classes to analyze (empty dataset).</p>\n"
+
+    rows = []
+    for c in coverages:
+        row_class = ' class="low-coverage"' if c.is_low_coverage else ""
+        flag = " ⚠️ low coverage" if c.is_low_coverage else ""
+        rows.append(
+            f"<tr{row_class}><td>{html_lib.escape(str(c.class_label))}</td>"
+            f"<td>{c.class_size}</td><td>{c.class_fraction:.1%}</td>"
+            f"<td>{c.p_threshold:.1%}{flag}</td></tr>"
+        )
+
+    low = [c for c in coverages if c.is_low_coverage]
+    if low:
+        worst = low[0]
+        summary = (
+            f"<p><strong>{len(low)} of {len(coverages)} classes</strong> have a threshold at or "
+            f"below 10% -- the highest poisoning rate this project's own "
+            f"evaluation has validated (see the Article 1 paper). Class "
+            f"{html_lib.escape(str(worst.class_label))}, the smallest, could have its guard "
+            f"suppressed by poisoning as little as {worst.p_threshold:.1%} of "
+            f"the whole dataset. This is a structural property of the "
+            f"detector applied to this class distribution, not a measured "
+            f"result on this specific dataset's content.</p>"
+        )
+    else:
+        summary = (
+            "<p>No class falls below the 10% reference threshold. This does not "
+            "mean detection is guaranteed at any poisoning rate -- only that "
+            "no class's size alone is known, from this analysis, to blind the "
+            "clustering guard within the range this project has tested.</p>"
+        )
+
+    return (
+        "<h2>Class-balance coverage</h2>\n"
+        "<p>Estimated poisoning rate (as a fraction of the whole dataset) at "
+        "which activation clustering's minority-cluster guard would stop "
+        "flagging each class, assuming the class sizes below reflect an "
+        "unpoisoned baseline -- if this dataset is already partially "
+        "poisoned, these thresholds are optimistic (see the risk module's "
+        "docstring for why).</p>\n"
+        '<table>\n<thead><tr><th>Class</th><th>Size</th><th>Share of dataset</th>'
+        "<th>Poisoning-rate threshold</th></tr></thead>\n"
+        f"<tbody>\n{''.join(rows)}\n</tbody>\n</table>\n"
+        f"{summary}\n"
+    )
+
+
+def render_html(report: AssuranceReport) -> str:
+    """Render an `AssuranceReport` as a self-contained HTML document: same
+    content and section order as `render_markdown`, styled for reading in
+    a browser or printing to PDF (File > Print > Save as PDF). No external
+    stylesheets, scripts, or fonts are loaded, so the file works offline
+    and doesn't depend on a PDF library with system dependencies.
+    """
+    esc = html_lib.escape
+    ev = report.evaluation
+
+    metric_items = []
+    if ev.get("clustering") is not None:
+        m = ev["clustering"]
+        metric_items.append(
+            f"<li><strong>Activation clustering:</strong> TPR={m['tpr']:.1%}, FPR={m['fpr']:.1%}, "
+            f"precision={m['precision']:.1%} (tp={m['tp']}, fp={m['fp']}, fn={m['fn']}, tn={m['tn']})</li>"
+        )
+    if ev.get("agreement") is not None:
+        m = ev["agreement"]
+        metric_items.append(
+            f"<li><strong>Both detectors agree:</strong> TPR={m['tpr']:.1%}, FPR={m['fpr']:.1%}, "
+            f"precision={m['precision']:.1%} (tp={m['tp']}, fp={m['fp']}, fn={m['fn']}, tn={m['tn']})</li>"
+        )
+    if ev.get("spectral") is not None:
+        m = ev["spectral"]
+        metric_items.append(
+            f"<li><strong>Spectral signature analysis:</strong> AUROC={m['auroc']:.3f} "
+            f"({_auroc_band(m['auroc'])}), average precision={m['average_precision']:.3f}, "
+            f"top-k recall={m['top_k_recall']:.1%}</li>"
+        )
+    if ev.get("fused") is not None:
+        m = ev["fused"]
+        metric_items.append(
+            f"<li><strong>Fused score (spectral + clustering combined):</strong> AUROC={m['auroc']:.3f} "
+            f"({_auroc_band(m['auroc'])}), average precision={m['average_precision']:.3f}, "
+            f"top-k recall={m['top_k_recall']:.1%}</li>"
+        )
+    metrics_html = "\n".join(metric_items) if metric_items else "<li>No detector metrics available.</li>"
+
+    atlas_items = "\n".join(
+        f"<li><strong>[{esc(t['id'])}] {esc(t['name'])}</strong> -- {esc(t['relevance'])}</li>"
+        for t in report.atlas_techniques
+    )
+
+    coverage_html = _render_coverage_html(report.class_coverage) if report.class_coverage is not None else ""
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>aegis-scan Assurance Report -- {esc(report.dataset)}</title>
+<style>
+  body {{ font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 820px;
+         margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; line-height: 1.5; }}
+  h1 {{ border-bottom: 3px solid #1a1a1a; padding-bottom: 0.3rem; }}
+  h2 {{ margin-top: 2rem; border-bottom: 1px solid #ccc; padding-bottom: 0.2rem; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 1rem 0; }}
+  th, td {{ border: 1px solid #ccc; padding: 0.4rem 0.6rem; text-align: left; }}
+  th {{ background: #f0f0f0; }}
+  .meta {{ color: #444; }}
+  .headline {{ font-size: 1.05rem; background: #f7f7f7; border-left: 4px solid #333; padding: 0.8rem 1rem; }}
+  tr.low-coverage {{ color: #a30000; font-weight: 600; }}
+  @media print {{ body {{ margin: 0; max-width: none; }} }}
+</style>
+</head>
+<body>
+<h1>aegis-scan Assurance Report</h1>
+<p class="meta">
+  <strong>Dataset:</strong> {esc(report.dataset)}<br>
+  <strong>Generated:</strong> {esc(report.generated_at)}<br>
+  <strong>Poison rate (ground truth):</strong> {ev['poison_rate']:.3%}
+</p>
+
+<h2>Finding</h2>
+<p class="headline">{esc(report.headline)}</p>
+
+<h2>Detection metrics</h2>
+<ul>
+{metrics_html}
+</ul>
+
+<h2>MITRE ATLAS mapping</h2>
+<p>The attack this report tests for maps to the following ATLAS techniques:</p>
+<ul>
+{atlas_items}
+</ul>
+
+<h2>NIST AI RMF mapping</h2>
+<p><strong>{esc(report.nist_ai_rmf_measure['id'])}:</strong> &quot;{esc(report.nist_ai_rmf_measure['text'])}&quot;</p>
+<p>{esc(report.nist_ai_rmf_measure['how_this_report_satisfies_it'])}</p>
+
+{coverage_html}</body>
+</html>
+"""

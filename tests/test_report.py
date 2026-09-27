@@ -7,6 +7,7 @@ from aegis_scan.report import (
     NIST_AI_RMF_MEASURE,
     AssuranceReport,
     generate_report,
+    render_html,
     render_markdown,
 )
 
@@ -149,3 +150,83 @@ def test_report_includes_coverage_section_when_labels_supplied():
     md = render_markdown(report)
     assert "Class-balance coverage" in md
     assert "low coverage" in md
+
+
+def test_render_html_is_a_self_contained_document():
+    report = generate_report(_fake_evaluation(poison_rate=0.05), dataset="healthcare_5pct")
+    doc = render_html(report)
+
+    assert doc.startswith("<!doctype html>")
+    assert "<html" in doc and "</html>" in doc
+    assert "<style>" in doc  # styling is inlined, not linked
+    assert "http://" not in doc and "https://" not in doc  # nothing loaded from the network
+    assert "healthcare_5pct" in doc
+    assert "5.000%" in doc
+
+
+def test_render_html_includes_atlas_and_nist_sections():
+    report = generate_report(_fake_evaluation())
+    doc = render_html(report)
+
+    assert "MITRE ATLAS mapping" in doc
+    assert "AML.T0020" in doc
+    assert "NIST AI RMF mapping" in doc
+    assert "MEASURE 2.7" in doc
+
+
+def test_render_html_only_includes_metrics_that_are_present():
+    evaluation = _fake_evaluation(
+        fused={"auroc": 0.97, "average_precision": 0.9, "top_k_recall": 0.84},
+    )
+    report = generate_report(evaluation)
+    doc = render_html(report)
+
+    assert "Fused score" in doc
+    assert "Activation clustering:" not in doc
+    assert "Both detectors agree" not in doc
+    assert "Spectral signature analysis:" not in doc
+
+
+def test_render_html_omits_coverage_section_when_no_labels_supplied():
+    report = generate_report(_fake_evaluation())
+    assert "Class-balance coverage" not in render_html(report)
+
+
+def test_render_html_includes_coverage_table_when_labels_supplied():
+    import numpy as np
+
+    labels = np.array([0] * 10 + [1] * 90)  # class 0 is a 10% minority -> low coverage
+    report = generate_report(_fake_evaluation(), labels=labels)
+    doc = render_html(report)
+
+    assert "Class-balance coverage" in doc
+    assert "<table>" in doc
+    assert "low coverage" in doc
+    assert 'class="low-coverage"' in doc
+
+
+def test_render_html_escapes_untrusted_dataset_name():
+    """The dataset name and headline flow into the HTML unescaped strings
+    would be a stored-XSS-in-a-local-file bug; a dataset name containing
+    markup must come out escaped, not as live HTML."""
+    report = generate_report(_fake_evaluation(), dataset="<script>alert(1)</script>")
+    doc = render_html(report)
+
+    assert "<script>alert(1)</script>" not in doc
+    assert "&lt;script&gt;" in doc
+
+
+def test_render_html_and_render_markdown_agree_on_headline_and_poison_rate():
+    """Both renderers are views of the same AssuranceReport -- they should
+    never disagree on the actual numbers, only on formatting."""
+    evaluation = _fake_evaluation(
+        poison_rate=0.1,
+        fused={"auroc": 0.913, "average_precision": 0.8, "top_k_recall": 0.75},
+    )
+    report = generate_report(evaluation, dataset="synthetic_10pct")
+
+    md = render_markdown(report)
+    doc = render_html(report)
+
+    assert "10.000%" in md and "10.000%" in doc
+    assert "0.913" in md and "0.913" in doc

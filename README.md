@@ -92,7 +92,13 @@ Last, translate those numbers into a report a security or compliance reviewer ca
 aegis-scan report --evaluate data/evaluate_healthcare_5pct.json --dataset healthcare_5pct --out data/report_healthcare_5pct.md
 ```
 
-`report` runs no new analysis -- everything in it traces back to a number `evaluate` already computed against ground truth. It picks the strongest available evidence (the fused score, if present) for a one-sentence headline finding, then maps the attack being tested for to MITRE ATLAS technique IDs ([AML.T0020](https://atlas.mitre.org/) Poison Training Data, AML.T0059 Erode Dataset Integrity, AML.T0018 Backdoor ML Model) and the specific NIST AI RMF subcategory this kind of testing satisfies (MEASURE 2.7: "AI system security and resilience... are evaluated and documented"), and saves the result as a self-contained Markdown report.
+`report` runs no new analysis -- everything in it traces back to a number `evaluate` already computed against ground truth. It picks the strongest available evidence (the fused score, if present) for a one-sentence headline finding, then maps the attack being tested for to MITRE ATLAS technique IDs ([AML.T0020](https://atlas.mitre.org/) Poison Training Data, AML.T0059 Erode Dataset Integrity, AML.T0018 Backdoor ML Model) and the specific NIST AI RMF subcategory this kind of testing satisfies (MEASURE 2.7: "AI system security and resilience... are evaluated and documented"), and saves the result as a self-contained report.
+
+The output format is picked from `--out`'s file extension: anything ending in `.html` renders a styled, self-contained HTML file (open it in any browser, then File > Print > Save as PDF -- no PDF library or system dependency required); any other extension (`.md`, or none) renders Markdown, unchanged from before. Both formats show exactly the same numbers and section order -- only the presentation differs.
+
+```bash
+aegis-scan report --evaluate data/evaluate_healthcare_5pct.json --dataset healthcare_5pct --out data/report_healthcare_5pct.html
+```
 
 ## Custom datasets
 
