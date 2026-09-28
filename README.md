@@ -2,9 +2,9 @@
 
 Open-source detection of data poisoning and backdoor attacks in ML classification pipelines, validated across a healthcare-imaging benchmark and a general-purpose benchmark.
 
-**Status: all 8 pipeline stages implemented and tested.** Dataset loading, synthetic poison injection, classifier training, activation extraction, detection, fusion, evaluation, and reporting are all below, end to end, on the synthetic dataset -- confirming against the real healthcare/benchmark loaders on a machine with normal internet access is the next step.
+**Status: all 8 pipeline stages implemented and tested, with published results.** Dataset loading, synthetic poison injection, classifier training, activation extraction, detection, fusion, evaluation, and reporting all run end to end against the real PneumoniaMNIST and CIFAR-10 loaders -- a full 40-configuration grid (2 datasets x 4 poison rates x 5 seeds) has been run and its results are reported in the paper below.
 
-This project is the empirical companion to [*Toward Automated Detection of Data Poisoning and Backdoor Attacks in Healthcare Imaging AI*](https://doi.org/10.5281/zenodo.22431042) (Zenodo, DOI 10.5281/zenodo.22431042), which specifies the methodology this code implements.
+This project is the open-source implementation accompanying [*Fusing Spectral Signatures and Activation Clustering for Backdoor Detection in Healthcare Imaging Models: Method, Implementation, and Evaluation*](https://arxiv.org/abs/2609.14290) (arXiv:2609.14290, cs.CR/cs.LG; also on Zenodo, DOI [10.5281/zenodo.22732363](https://doi.org/10.5281/zenodo.22732363)), which this code implements and whose results were produced by this pipeline.
 
 ## Why
 
