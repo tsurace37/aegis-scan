@@ -28,6 +28,16 @@ An *aegis* was the shield carried by Zeus and Athena in Greek mythology -- famou
 ## Install
 
 ```bash
+pip install aegis-scan-ai
+```
+
+This installs the `aegis-scan` command (all commands below use that name -- only the PyPI package name is `aegis-scan-ai`; the CLI, repo, and everything else stays `aegis-scan`. The PyPI name `aegis-scan` itself was already taken by an unrelated project when this one went to publish).
+
+To install from source instead (e.g. to run the test suite or make changes):
+
+```bash
+git clone https://github.com/tsurace37/aegis-scan
+cd aegis-scan
 pip install -e ".[dev]"
 ```
 
@@ -126,6 +136,15 @@ Both are looked up through one registry (`models/registry.py`), so `train`/`load
 ```bash
 pytest
 ```
+
+## Releasing (publishing a new version to PyPI)
+
+Publishing is automated via GitHub Actions using PyPI's "trusted publishing" (OIDC) -- there is no API token stored anywhere, in this repo or elsewhere. This needs a one-time setup step before the first release:
+
+1. On [pypi.org](https://pypi.org), under your account's **Publishing** settings, add a new "pending trusted publisher" with: PyPI project name `aegis-scan-ai`, repository owner `tsurace37`, repository name `aegis-scan`, workflow filename `publish.yml`, and environment name `pypi`. (The project doesn't need to already exist on PyPI for this -- a pending publisher creates it on the first successful publish.)
+2. Bump the `version` field in `pyproject.toml`.
+3. Create a new GitHub Release (Releases -> Draft a new release -> tag it, e.g. `v0.1.0`) and publish it.
+4. That triggers `.github/workflows/publish.yml`, which builds the package and publishes it to PyPI automatically. Check the Actions tab if it doesn't show up on PyPI within a few minutes.
 
 ## Design notes
 
