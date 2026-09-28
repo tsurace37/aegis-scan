@@ -332,7 +332,7 @@ def cmd_report(args: argparse.Namespace) -> None:
         with np.load(args.inject) as npz:
             labels = npz["labels"]
 
-    print(f"[08] mapping findings to MITRE ATLAS + NIST AI RMF for dataset '{args.dataset}'...")
+    print(f"[08] mapping findings to MITRE ATLAS + NIST AI RMF + ISO/IEC 42001 (unverified) for dataset '{args.dataset}'...")
     report = generate_report(evaluation, dataset=args.dataset, labels=labels)
     print(f"      {report.headline}")
 
