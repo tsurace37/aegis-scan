@@ -4,6 +4,7 @@ import math
 
 from aegis_scan.report import (
     ATLAS_TECHNIQUES,
+    ISO_IEC_42001,
     NIST_AI_RMF_MEASURE,
     AssuranceReport,
     generate_report,
@@ -31,6 +32,7 @@ def test_generate_report_includes_framework_mappings():
     assert report.dataset == "synthetic_10pct"
     assert report.atlas_techniques == ATLAS_TECHNIQUES
     assert report.nist_ai_rmf_measure == NIST_AI_RMF_MEASURE
+    assert report.iso_42001 == ISO_IEC_42001
     assert report.evaluation is evaluation
 
 
@@ -44,6 +46,15 @@ def test_generate_report_atlas_ids_are_the_verified_ones():
 
 def test_nist_measure_id_is_2_7():
     assert NIST_AI_RMF_MEASURE["id"] == "MEASURE 2.7"
+
+
+def test_iso_42001_control_id_is_a_6_2_4_and_flagged_unverified():
+    # Locks in the exact control this project maps to and, critically,
+    # that it's marked unverified -- ISO/IEC 42001's own text is
+    # paywalled and was never consulted, so this flag must never be
+    # silently dropped or flipped to True by an accidental edit.
+    assert ISO_IEC_42001["id"] == "A.6.2.4"
+    assert ISO_IEC_42001["verified"] is False
 
 
 def test_headline_prefers_fused_over_everything_else():
@@ -111,6 +122,15 @@ def test_render_markdown_includes_atlas_and_nist_sections():
     assert "MEASURE 2.7" in md
 
 
+def test_render_markdown_includes_iso_42001_section_marked_unverified():
+    report = generate_report(_fake_evaluation())
+    md = render_markdown(report)
+
+    assert "ISO/IEC 42001 mapping" in md
+    assert "A.6.2.4" in md
+    assert "unverified" in md.lower()
+
+
 def test_render_markdown_only_includes_metrics_that_are_present():
     evaluation = _fake_evaluation(
         fused={"auroc": 0.97, "average_precision": 0.9, "top_k_recall": 0.84},
@@ -172,6 +192,15 @@ def test_render_html_includes_atlas_and_nist_sections():
     assert "AML.T0020" in doc
     assert "NIST AI RMF mapping" in doc
     assert "MEASURE 2.7" in doc
+
+
+def test_render_html_includes_iso_42001_section_marked_unverified():
+    report = generate_report(_fake_evaluation())
+    doc = render_html(report)
+
+    assert "ISO/IEC 42001 mapping" in doc
+    assert "A.6.2.4" in doc
+    assert "unverified" in doc.lower()
 
 
 def test_render_html_only_includes_metrics_that_are_present():

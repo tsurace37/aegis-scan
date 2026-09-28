@@ -12,6 +12,15 @@ Framework IDs and quoted text below were checked against MITRE ATLAS's
 own technique data (atlas.mitre.org / mitre-atlas/atlas-data) and NIST
 AI 100-1 directly, not secondhand summaries, because getting a citation
 wrong in a security report is worse than leaving it out.
+
+ISO/IEC 42001 is handled differently on purpose: the standard's own
+text is paywalled, so unlike ATLAS and NIST AI RMF above, the control
+number/name below (A.6.2.4, "AI system verification and validation")
+was confirmed only against secondary sources describing the standard's
+public table of contents, not the standard's own wording -- no clause
+text is quoted, and the report says so explicitly rather than implying
+a verification this project couldn't actually do. Treat this mapping
+as a pointer to check against your own copy, not a citation.
 """
 
 from __future__ import annotations
@@ -85,6 +94,30 @@ NIST_AI_RMF_MEASURE = {
     ),
 }
 
+# ISO/IEC 42001:2023 Annex A control. Unlike ATLAS_TECHNIQUES and
+# NIST_AI_RMF_MEASURE above, this was NOT checked against the standard's
+# own text -- ISO/IEC 42001 is a paywalled standard, and no clause text
+# is quoted here. The control number and name were identified from public
+# secondary sources describing the standard's Annex A control list; the
+# actual clause wording, and whether this report's evaluation output
+# fully satisfies it, has not been verified against a purchased copy of
+# the standard. Treat this as an unverified pointer, not a citation.
+ISO_IEC_42001 = {
+    "id": "A.6.2.4",
+    "name": "AI system verification and validation",
+    "verified": False,
+    "how_this_report_relates": (
+        "This control (per public secondary sources on ISO/IEC 42001's "
+        "Annex A -- not the standard's own text, which is paywalled and "
+        "was not consulted) covers verifying and validating an AI system's "
+        "behavior. This report's quantified detection performance against "
+        "a known-poisoned ground truth is the kind of technical evidence "
+        "such a control would plausibly ask for, but this mapping has not "
+        "been checked against the actual clause wording -- verify against "
+        "your own copy of the standard before relying on it."
+    ),
+}
+
 
 def _auroc_band(auroc: float) -> str:
     """A standard, widely-used qualitative reading of an AUROC value -- not this project's own invention."""
@@ -144,6 +177,7 @@ class AssuranceReport:
     evaluation: dict[str, Any]
     atlas_techniques: list[dict[str, str]]
     nist_ai_rmf_measure: dict[str, str]
+    iso_42001: dict[str, Any]
     headline: str
     class_coverage: list[ClassCoverage] | None = None
 
@@ -175,6 +209,7 @@ def generate_report(
         evaluation=evaluation,
         atlas_techniques=ATLAS_TECHNIQUES,
         nist_ai_rmf_measure=NIST_AI_RMF_MEASURE,
+        iso_42001=ISO_IEC_42001,
         headline=_build_headline(evaluation),
         class_coverage=class_poisoning_thresholds(labels) if labels is not None else None,
     )
@@ -241,6 +276,12 @@ def render_markdown(report: AssuranceReport) -> str:
         f"**{report.nist_ai_rmf_measure['id']}:** \"{report.nist_ai_rmf_measure['text']}\"",
         "",
         report.nist_ai_rmf_measure["how_this_report_satisfies_it"],
+        "",
+        "## ISO/IEC 42001 mapping (unverified -- see note)",
+        "",
+        f"**{report.iso_42001['id']}:** {report.iso_42001['name']}",
+        "",
+        f"> **Unverified:** {report.iso_42001['how_this_report_relates']}",
         "",
     ]
 
@@ -365,6 +406,8 @@ def render_html(report: AssuranceReport) -> str:
   .meta {{ color: #444; }}
   .headline {{ font-size: 1.05rem; background: #f7f7f7; border-left: 4px solid #333; padding: 0.8rem 1rem; }}
   tr.low-coverage {{ color: #a30000; font-weight: 600; }}
+  .unverified-tag {{ font-size: 0.75em; font-weight: normal; color: #a36a00; }}
+  .unverified-note {{ background: #fff8e6; border-left: 4px solid #a36a00; padding: 0.6rem 1rem; }}
   @media print {{ body {{ margin: 0; max-width: none; }} }}
 </style>
 </head>
@@ -393,6 +436,10 @@ def render_html(report: AssuranceReport) -> str:
 <h2>NIST AI RMF mapping</h2>
 <p><strong>{esc(report.nist_ai_rmf_measure['id'])}:</strong> &quot;{esc(report.nist_ai_rmf_measure['text'])}&quot;</p>
 <p>{esc(report.nist_ai_rmf_measure['how_this_report_satisfies_it'])}</p>
+
+<h2>ISO/IEC 42001 mapping <span class="unverified-tag">(unverified -- see note)</span></h2>
+<p><strong>{esc(report.iso_42001['id'])}:</strong> {esc(report.iso_42001['name'])}</p>
+<p class="unverified-note"><strong>Unverified:</strong> {esc(report.iso_42001['how_this_report_relates'])}</p>
 
 {coverage_html}</body>
 </html>
